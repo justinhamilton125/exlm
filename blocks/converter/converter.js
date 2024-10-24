@@ -56,10 +56,8 @@ export default function decorate(block) {
     const converterLinkElement = block.querySelector('a'); // Look for an <a> tag in the block        
     if (converterLinkElement) {          
       const converterLink = converterLinkElement.href; // Extract the converter link          
-      const contentDiv = block.querySelector('.content'); // Target the content div  
       console.log('Converter link found:', converterLink);  
-      console.log('Target content div:', contentDiv);  
-      fetchAndRedecorate(converterLink, contentDiv); // Pass the converter link and the content div to fetchAndRedecorate  
+      fetchAndRedecorate(converterLink, block); // Pass the converter link and the converter block itself  
     } else {          
       console.error("Converter URL not found in the block.");        
     }      
