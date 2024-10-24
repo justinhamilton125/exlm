@@ -1,20 +1,19 @@
-import { marked } from 'marked';  
 import { decorateBlock, loadBlock } from '../../scripts/lib-franklin.js';  
   
 export default function decorate(block) {  
-  // Function to fetch and convert Markdown content from the given URL  
-  const fetchMarkdownContent = async (url) => {  
+  // Function to fetch and convert HTML content from the given URL  
+  const fetchHtmlContent = async (url) => {  
     try {  
-      console.log(`Fetching Markdown content from: ${url}`);  
+      console.log(`Fetching HTML content from: ${url}`);  
       const response = await fetch(url);  
       if (!response.ok) {  
         throw new Error(`Failed to fetch content from ${url} - Status: ${response.status}`);  
       }  
-      const markdownContent = await response.text();  
-      console.log('Fetched Markdown content:', markdownContent);  
-      return markdownContent;  
+      const htmlContent = await response.text();  
+      console.log('Fetched HTML content:', htmlContent);  
+      return htmlContent;  
     } catch (error) {  
-      console.error('Error fetching Markdown content:', error);  
+      console.error('Error fetching HTML content:', error);  
       throw error;  
     }  
   };  
@@ -22,15 +21,11 @@ export default function decorate(block) {
   // Function to fetch, convert, and decorate the content  
   const fetchAndRedecorate = async (url, targetBlock) => {  
     try {  
-      // Fetch the Markdown content from the URL  
-      const markdownString = await fetchMarkdownContent(url);  
-      console.log('Fetched Markdown content:', markdownString); // Debug log  
+      // Fetch the HTML content from the URL  
+      const htmlString = await fetchHtmlContent(url);  
+      console.log('Fetched HTML content:', htmlString); // Debug log  
   
-      // Convert Markdown to HTML  
-      const htmlString = marked(markdownString);  
-      console.log('Converted HTML content:', htmlString); // Debug log  
-  
-      // Create a new DOM parser to parse the converted HTML string  
+      // Create a new DOM parser to parse the fetched HTML string  
       const parser = new DOMParser();  
       const doc = parser.parseFromString(htmlString, 'text/html');  
   
@@ -38,21 +33,17 @@ export default function decorate(block) {
       const elements = doc.body.children;  
   
       if (elements.length === 0) {  
-        console.warn('No content found in the converted HTML');  
+        console.warn('No content found in the fetched HTML');  
       }  
   
       // Clear the target block before appending new content  
       targetBlock.innerHTML = '';  
   
-      // Insert the converted HTML into the target block  
       Array.from(elements).forEach((element) => {  
         targetBlock.appendChild(element); // Append the element  
         decorateBlock(element); // Decorate the element  
         loadBlock(element); // Load the element  
       });  
-  
-      // Apply any necessary styles to the target block or its children here  
-      // Example: targetBlock.classList.add('converted-content');  
     } catch (error) {  
       // Replace console.error with a custom logging function if needed  
       console.error('Error fetching or redecorating:', error);  
