@@ -1,5 +1,3 @@
 mountpoints:
   /:
-    url: https://51837-exlmconverter-dev.adobeioruntime.net/api/v1/web/main/convert
-    type: markup
-    suffix: '.md'
+    url: https://drive.google.com/drive/folders/1MK41cyv7GbfMVW6S-c2u4pbDOVMHoZ0s?usp=drive_link
