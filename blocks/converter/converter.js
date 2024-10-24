@@ -1,20 +1,19 @@
-import { marked } from 'marked';  
 import { decorateBlock, loadBlock } from '../../scripts/lib-franklin.js';  
   
 export default function decorate(block) {  
-  // Function to fetch and convert Markdown content to HTML  
-  async function fetchMarkdown(url) {  
+  // Function to fetch and convert HTML content from the given URL  
+  async function fetchHtmlContent(url) {  
     try {  
-      console.log(`Fetching Markdown content from: ${url}`);  
+      console.log(`Fetching HTML content from: ${url}`);  
       const response = await fetch(url);  
       if (!response.ok) {  
-        throw new Error(`Failed to fetch Markdown from ${url} - Status: ${response.status}`);  
+        throw new Error(`Failed to fetch content from ${url} - Status: ${response.status}`);  
       }  
-      const markdown = await response.text();  
-      console.log('Fetched Markdown content:', markdown);  
-      return marked(markdown); // Convert Markdown to HTML  
+      const htmlContent = await response.text();  
+      console.log('Fetched HTML content:', htmlContent);  
+      return htmlContent;  
     } catch (error) {  
-      console.error('Error fetching Markdown:', error);  
+      console.error('Error fetching HTML content:', error);  
       throw error;  
     }  
   }  
@@ -22,9 +21,9 @@ export default function decorate(block) {
   // Function to fetch, convert, and decorate the content  
   async function fetchAndRedecorate(url, targetBlock) {  
     try {  
-      // Fetch and convert Markdown to HTML  
-      const htmlString = await fetchMarkdown(url);  
-      console.log('Fetched and converted HTML:', htmlString); // Debug log  
+      // Fetch the HTML content from the URL  
+      const htmlString = await fetchHtmlContent(url);  
+      console.log('Fetched HTML content:', htmlString); // Debug log  
   
       // Create a new DOM parser to parse the fetched HTML string  
       const parser = new DOMParser();  
@@ -63,6 +62,6 @@ export default function decorate(block) {
     }  
   }  
   
-  // Call the function to extract the converter link and redecorate the block
+  // Call the function to extract the converter link and redecorate the block  
   extractAndRedecorate();  
 }  
