@@ -1,23 +1,21 @@
-import { marked } from 'marked';  
 import { decorateBlock, loadBlock } from '../../scripts/lib-franklin.js';  
   
 export default function decorate(block) {  
-  // Function to fetch and convert Markdown content to HTML  
-  async function fetchMarkdown(url) {  
+  // Function to fetch HTML content from the EXL Converter URL  
+  async function fetchHTMLContent(url) {  
     const response = await fetch(url);  
     if (!response.ok) {  
-      throw new Error(`Failed to fetch Markdown from ${url}`);  
+      throw new Error(`Failed to fetch content from ${url}`);  
     }  
-    const markdown = await response.text();  
-    return marked(markdown); // Convert Markdown to HTML  
+    return response.text(); // Get the response body as text (HTML)  
   }  
   
-  // Function to fetch, convert, and decorate the content  
-  async function fetchAndDecorate(url, targetBlock) {  
+  // Function to fetch, convert, and redecorate the content  
+  async function fetchAndRedecorate(url, targetBlock) {  
     try {  
-      // Fetch and convert Markdown to HTML  
-      const htmlString = await fetchMarkdown(url);  
-      console.log('Fetched and converted HTML:', htmlString); // Debug log  
+      // Fetch the HTML content  
+      const htmlString = await fetchHTMLContent(url);  
+      console.log('Fetched HTML content:', htmlString); // Debug log  
   
       // Create a new DOM parser to parse the fetched HTML string  
       const parser = new DOMParser();  
@@ -39,21 +37,21 @@ export default function decorate(block) {
       targetBlock.append(...blocks);  
     } catch (error) {  
       // Replace console.error with a custom logging function if needed  
-      console.error('Error fetching or decorating:', error);  
+      console.error('Error fetching or redecorating:', error);  
     }  
   }  
   
-  // Function to extract URL from the block and call fetchAndDecorate  
-  function extractAndDecorate() {  
-    const markdownLinkElement = block.querySelector('a'); // Look for an <a> tag in the block  
-    if (markdownLinkElement) {  
-      const markdownLink = markdownLinkElement.href; // Extract the markdown link  
-      fetchAndDecorate(markdownLink, block); // Pass the markdown link and the block to fetchAndDecorate  
+  // Function to extract URL from the block and call fetchAndRedecorate  
+  function extractAndRedecorate() {  
+    const converterLinkElement = block.querySelector('a'); // Look for an <a> tag in the block  
+    if (converterLinkElement) {  
+      const converterLink = converterLinkElement.href; // Extract the converter link  
+      fetchAndRedecorate(converterLink, block); // Pass the converter link and the block to fetchAndRedecorate  
     } else {  
-      console.error("Markdown URL not found in the block.");  
+      console.error("Converter URL not found in the block.");  
     }  
   }  
   
-  // Call the function to extract the markdown link and decorate the block  
-  extractAndDecorate();  
+  // Call the function to extract the converter link and redecorate the block  
+  extractAndRedecorate();  
 }  
