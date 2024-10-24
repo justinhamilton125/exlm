@@ -1,8 +1,7 @@
 import { marked } from 'marked';  
 import { decorateBlock, loadBlock } from '../../scripts/lib-franklin.js';  
   
-export default async function decorate() {  // Removed 'block' parameter  
-  
+export default function decorate(block) {  
   // Function to fetch and convert Markdown content to HTML  
   async function fetchMarkdown(url) {  
     const response = await fetch(url);  
@@ -14,7 +13,7 @@ export default async function decorate() {  // Removed 'block' parameter
   }  
   
   // Function to fetch, convert, and decorate the content  
-  async function fetchAndDecorate(url) {  
+  async function fetchAndDecorate(url, targetBlock) {  
     try {  
       // Fetch and convert Markdown to HTML  
       const htmlString = await fetchMarkdown(url);  
@@ -31,19 +30,30 @@ export default async function decorate() {  // Removed 'block' parameter
         console.warn('No blocks found with the class .block-to-decorate');  
       }  
   
-      blocks.forEach((decoratedBlock) => {  // Renamed to avoid shadowing  
+      blocks.forEach((decoratedBlock) => {  
         decorateBlock(decoratedBlock); // Decorate the block  
         loadBlock(decoratedBlock);     // Load the block  
       });  
   
-      // Append the decorated blocks to the body or any specific element  
-      document.body.append(...blocks);  
+      // Append the decorated blocks to the target block  
+      targetBlock.append(...blocks);  
     } catch (error) {  
       // Replace console.error with a custom logging function if needed  
       console.error('Error fetching or decorating:', error);  
     }  
   }  
   
-  // Call fetchAndDecorate with the URL  
-  fetchAndDecorate();
+  // Function to extract URL from the block and call fetchAndDecorate  
+  function extractAndDecorate() {  
+    const markdownLinkElement = block.querySelector('a'); // Look for an <a> tag in the block  
+    if (markdownLinkElement) {  
+      const markdownLink = markdownLinkElement.href; // Extract the markdown link  
+      fetchAndDecorate(markdownLink, block); // Pass the markdown link and the block to fetchAndDecorate  
+    } else {  
+      console.error("Markdown URL not found in the block.");  
+    }  
+  }  
+  
+  // Call the function to extract the markdown link and decorate the block  
+  extractAndDecorate();  
 }  
