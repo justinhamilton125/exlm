@@ -2,7 +2,7 @@ import { decorateBlock, loadBlock } from '../../scripts/lib-franklin.js';
   
 export default function decorate(block) {  
   // Function to fetch and convert HTML content from the given URL  
-  async function fetchHtmlContent(url) {  
+  const fetchHtmlContent = async (url) => {  
     try {  
       console.log(`Fetching HTML content from: ${url}`);  
       const response = await fetch(url);  
@@ -16,10 +16,10 @@ export default function decorate(block) {
       console.error('Error fetching HTML content:', error);  
       throw error;  
     }  
-  }  
+  };  
   
   // Function to fetch, convert, and decorate the content  
-  async function fetchAndRedecorate(url, targetBlock) {  
+  const fetchAndRedecorate = async (url, targetBlock) => {  
     try {  
       // Fetch the HTML content from the URL  
       const htmlString = await fetchHtmlContent(url);  
@@ -48,10 +48,10 @@ export default function decorate(block) {
       // Replace console.error with a custom logging function if needed  
       console.error('Error fetching or redecorating:', error);  
     }  
-  }  
+  };  
   
   // Function to extract URL from the block and call fetchAndRedecorate  
-  function extractAndRedecorate() {  
+  const extractAndRedecorate = () => {  
     const converterLinkElement = block.querySelector('a'); // Look for an <a> tag in the block  
     if (converterLinkElement) {  
       const converterLink = converterLinkElement.href; // Extract the converter link  
@@ -60,7 +60,7 @@ export default function decorate(block) {
     } else {  
       console.error("Converter URL not found in the block.");  
     }  
-  }  
+  };  
   
   // Call the function to extract the converter link and redecorate the block  
   extractAndRedecorate();  
