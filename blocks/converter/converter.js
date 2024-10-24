@@ -1,40 +1,43 @@
+import { marked } from 'marked';  
 import { decorateBlock, loadBlock } from '../../scripts/lib-franklin.js';  
   
 export default function decorate(block) {  
-  // Function to fetch HTML content from the EXL Converter URL  
-  async function fetchHTMLContent(url) {  
+  // Function to fetch and convert Markdown content to HTML  
+  async function fetchMarkdown(url) {  
     const response = await fetch(url);  
     if (!response.ok) {  
-      throw new Error(`Failed to fetch content from ${url}`);  
+      throw new Error(`Failed to fetch Markdown from ${url}`);  
     }  
-    return response.text(); // Get the response body as text (HTML)  
+    const markdown = await response.text();  
+    return marked(markdown); // Convert Markdown to HTML  
   }  
   
-  // Function to fetch, convert, and redecorate the content  
+  // Function to fetch, convert, and decorate the content  
   async function fetchAndRedecorate(url, targetBlock) {  
     try {  
-      // Fetch the HTML content  
-      const htmlString = await fetchHTMLContent(url);  
-      console.log('Fetched HTML content:', htmlString); // Debug log  
+      // Fetch and convert Markdown to HTML  
+      const htmlString = await fetchMarkdown(url);  
+      console.log('Fetched and converted HTML:', htmlString); // Debug log  
   
       // Create a new DOM parser to parse the fetched HTML string  
       const parser = new DOMParser();  
       const doc = parser.parseFromString(htmlString, 'text/html');  
   
       // Assuming the blocks you want to decorate have a specific class, e.g., 'block-to-decorate'  
-      const blocks = doc.querySelectorAll('.block-to-decorate');  
+      const blocks = doc.body.children; // Use all top-level children  
   
       if (blocks.length === 0) {  
-        console.warn('No blocks found with the class .block-to-decorate');  
+        console.warn('No content found in the fetched HTML');  
       }  
   
-      blocks.forEach((decoratedBlock) => {  
+      // Clear the target block before appending new content  
+      targetBlock.innerHTML = '';  
+  
+      Array.from(blocks).forEach((decoratedBlock) => {  
         decorateBlock(decoratedBlock); // Decorate the block  
         loadBlock(decoratedBlock);     // Load the block  
+        targetBlock.appendChild(decoratedBlock); // Append the decorated block  
       });  
-  
-      // Append the decorated blocks to the target block  
-      targetBlock.append(...blocks);  
     } catch (error) {  
       // Replace console.error with a custom logging function if needed  
       console.error('Error fetching or redecorating:', error);  
@@ -46,6 +49,7 @@ export default function decorate(block) {
     const converterLinkElement = block.querySelector('a'); // Look for an <a> tag in the block  
     if (converterLinkElement) {  
       const converterLink = converterLinkElement.href; // Extract the converter link  
+      fetchAndRedecorate(converterLink, block); // Pass the converter link and the block to fetchAndRedecorate  
       fetchAndRedecorate(converterLink, block); // Pass the converter link and the block to fetchAndRedecorate  
     } else {  
       console.error("Converter URL not found in the block.");  
