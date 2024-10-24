@@ -30,20 +30,20 @@ export default function decorate(block) {
       const parser = new DOMParser();          
       const doc = parser.parseFromString(htmlString, 'text/html');            
   
-      // Assuming the blocks you want to decorate have a specific class, e.g., 'block-to-decorate'          
-      const blocks = doc.body.children; // Use all top-level children            
+      // Get all top-level elements in the parsed HTML          
+      const elements = doc.body.children;            
   
-      if (blocks.length === 0) {            
+      if (elements.length === 0) {            
         console.warn('No content found in the fetched HTML');          
       }            
   
       // Clear the target block before appending new content          
       targetBlock.innerHTML = '';            
   
-      Array.from(blocks).forEach((decoratedBlock) => {            
-        decorateBlock(decoratedBlock); // Decorate the block            
-        loadBlock(decoratedBlock);     // Load the block            
-        targetBlock.appendChild(decoratedBlock); // Append the decorated block          
+      Array.from(elements).forEach((element) => {            
+        targetBlock.appendChild(element); // Append the element          
+        decorateBlock(element); // Decorate the element            
+        loadBlock(element);     // Load the element          
       });        
     } catch (error) {          
       // Replace console.error with a custom logging function if needed          
