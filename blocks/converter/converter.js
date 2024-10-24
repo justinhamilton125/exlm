@@ -44,11 +44,15 @@ export default function decorate(block) {
       // Clear the target block before appending new content  
       targetBlock.innerHTML = '';  
   
+      // Insert the converted HTML into the target block  
       Array.from(elements).forEach((element) => {  
         targetBlock.appendChild(element); // Append the element  
         decorateBlock(element); // Decorate the element  
         loadBlock(element); // Load the element  
       });  
+  
+      // Apply any necessary styles to the target block or its children here  
+      // Example: targetBlock.classList.add('converted-content');  
     } catch (error) {  
       // Replace console.error with a custom logging function if needed  
       console.error('Error fetching or redecorating:', error);  
