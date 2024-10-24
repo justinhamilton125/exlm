@@ -8,7 +8,8 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@coveo/headless": "2.42.0"
+    "@coveo/headless": "2.42.0",
+    "coveo": "file:"
   },
   "engines": {
     "node": ">=20.0.0",

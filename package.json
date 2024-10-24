@@ -71,6 +71,7 @@
     ]
   },
   "dependencies": {
+    "@adobe/helix-project-boilerplate": "file:",
     "jsdom": "^24.0.0",
     "open": "^9.1.0"
   }
