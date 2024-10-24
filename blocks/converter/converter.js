@@ -5,11 +5,13 @@ export default function decorate(block) {
   // Function to fetch and convert Markdown content to HTML      
   async function fetchMarkdown(url) {        
     try {  
+      console.log(`Fetching Markdown content from: ${url}`);  
       const response = await fetch(url);        
       if (!response.ok) {          
         throw new Error(`Failed to fetch Markdown from ${url}`);        
       }        
       const markdown = await response.text();        
+      console.log('Fetched Markdown content:', markdown);  
       return marked(markdown); // Convert Markdown to HTML      
     } catch (error) {  
       console.error('Error fetching Markdown:', error);  
@@ -55,6 +57,8 @@ export default function decorate(block) {
     if (converterLinkElement) {          
       const converterLink = converterLinkElement.href; // Extract the converter link          
       const contentDiv = block.querySelector('.content'); // Target the content div  
+      console.log('Converter link found:', converterLink);  
+      console.log('Target content div:', contentDiv);  
       fetchAndRedecorate(converterLink, contentDiv); // Pass the converter link and the content div to fetchAndRedecorate  
     } else {          
       console.error("Converter URL not found in the block.");        
