@@ -72,6 +72,7 @@
   },
   "dependencies": {
     "jsdom": "^24.0.0",
+    "marked": "^5.1.2",
     "open": "^9.1.0"
   }
 }
