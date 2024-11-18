@@ -8,18 +8,12 @@ import {
   removeProductDuplicates,
 } from '../../scripts/browse-card/browse-card-utils.js';
 import { defaultProfileClient } from '../../scripts/auth/profile.js';
+import getEmitter from '../../scripts/events.js';
 import BuildPlaceholder from '../../scripts/browse-card/browse-card-placeholder.js';
 import ResponsiveList from '../../scripts/responsive-list/responsive-list.js';
-import {
-  handleTargetEvent,
-  checkTargetSupport,
-  targetDataAdapter,
-  updateCopyFromTarget,
-  setTargetDataAsBlockAttribute,
-} from '../../scripts/target/target.js';
+import defaultAdobeTargetClient from '../../scripts/adobe-target/adobe-target.js';
+import BrowseCardsTargetDataAdapter from '../../scripts/browse-card/browse-card-target-data-adapter.js';
 
-const UEAuthorMode = window.hlx.aemRoot || window.location.href.includes('.html');
-const DEFAULT_NUM_CARDS = 4;
 let placeholders = {};
 try {
   placeholders = await fetchLanguagePlaceholders();
@@ -27,8 +21,106 @@ try {
   // eslint-disable-next-line no-console
   console.error('Error fetching placeholders:', err);
 }
+
+const ALL_ADOBE_OPTIONS_KEY = placeholders?.allAdobeProducts || 'All Adobe Products';
+const DEFAULT_NUM_CARDS = 4;
+const UEAuthorMode = window.hlx.aemRoot || window.location.href.includes('.html');
+
+// Event for target data change (Updating the block based on target data)
+const targetEventEmitter = getEmitter('loadTargetBlocks');
+
+// Create array of numbers from 1 to n
 const countNumberAsArray = (n) => Array.from({ length: n }, (_, i) => n - i);
 
+/**
+ * Generates HTML for loading shimmer animation with customizable sizes and an optional CSS class
+ * @param {Array} shimmerSizes - An array of arrays, where each inner array
+ *  contains width (percentage) and height (pixels) for individual shimmer divs.
+ * @returns {string} - A string of HTML containing the shimmer divs with inline styles for width and height.
+ */
+function generateLoadingShimmer(shimmerSizes = [[100, 30]]) {
+  return shimmerSizes
+    .map(
+      ([width, height]) =>
+        `<div class="loading-shimmer" style="--placeholder-width: ${width}%; --placeholder-height: ${height}px"></div>`,
+    )
+    .join('');
+}
+
+/**
+ * Update the copy from the target
+ * @param {Object} data
+ * @param {HTMLElement} heading
+ * @param {HTMLElement} subheading
+ * @param {HTMLElement} taglineCta
+ * @param {HTMLElement} taglineText
+ * @returns {void}
+ */
+export function updateCopyFromTarget(data, heading, subheading, taglineCta, taglineText) {
+  if (data?.meta?.heading && heading) heading.innerHTML = data.meta.heading;
+  else heading?.remove();
+  if (data?.meta?.subheading && subheading) subheading.innerHTML = data.meta.subheading;
+  else subheading?.remove();
+  if (
+    taglineCta &&
+    data?.meta['tagline-cta-text'] &&
+    data?.meta['tagline-cta-url'] &&
+    data.meta['tagline-cta-text'].trim() !== '' &&
+    data.meta['tagline-cta-url'].trim() !== ''
+  ) {
+    taglineCta.innerHTML = `
+        <a href="${data.meta['tagline-cta-url']}" title="${data.meta['tagline-cta-text']}">
+          ${data.meta['tagline-cta-text']}
+        </a>
+      `;
+  } else {
+    taglineCta?.remove();
+  }
+  if (taglineText && data?.meta['tagline-text'] && data?.meta['tagline-text'].trim() !== '') {
+    taglineText.innerHTML = data.meta['tagline-text'];
+  } else {
+    taglineText?.remove();
+  }
+  if (!document.contains(taglineCta) && !document.contains(taglineText)) {
+    const taglineParentBlock = document.querySelector('.recommended-content-result-text');
+    if (taglineParentBlock) {
+      taglineParentBlock?.remove();
+    }
+  }
+}
+
+/**
+ * Sets target data as a data attribute on the given block element.
+ *
+ * This function checks if the provided `data` object contains a `meta` property.
+ * If the `meta` property exists, it serializes the metadata as a JSON string and
+ * adds it to the specified block element as a custom data attribute `data-analytics-target-meta`.
+ *
+ * @param {Object} data - The data returned from target.
+ * @param {HTMLElement} block - The DOM element to which the meta data will be added as an attribute.
+ *
+ */
+export function setTargetDataAsBlockAttribute(data, block) {
+  if (data?.meta) {
+    block.setAttribute('data-analytics-target-meta', JSON.stringify(data?.meta));
+  }
+}
+
+/**
+ * Adds a data-analytics-coveo-meta attribute to each recommended-content block on the page.
+ * Value is in the format coveo-X, where X represents the order of the block on the page.
+ */
+function setCoveoCountAsBlockAttribute() {
+  const recommendedBlocks = document.querySelectorAll('.recommended-content.block');
+  let coveoCount = 1;
+
+  recommendedBlocks.forEach((block) => {
+    block.setAttribute('data-analytics-coveo-meta', `coveo-${coveoCount}`);
+    coveoCount += 1;
+  });
+}
+
+// fetch list of all interests
 async function fetchInterestData() {
   try {
     let data;
@@ -46,17 +138,24 @@ async function fetchInterestData() {
     return [];
   }
 }
+const interestDataPromise = fetchInterestData();
 
+// Create a query string for coveo to exclude the card ids
 const prepareExclusionQuery = (cardIdsToExclude) => {
   // eslint-disable-next-line no-useless-escape
   const query = cardIdsToExclude.map((id) => `(@el_id NOT \"${id}\")`).join(' AND ');
   return cardIdsToExclude.length <= 1 ? query : `(${query})`;
 };
 
-const interestDataPromise = fetchInterestData();
+// Find the interests that are not present in the target data
+async function findEmptyFilters(targetCriteriaId, profileInterests = []) {
+  const resp = await defaultAdobeTargetClient.getTargetData(targetCriteriaId);
+  const data = resp?.data || [];
 
-const ALL_ADOBE_OPTIONS_KEY = placeholders?.allAdobeProducts || 'All Adobe Products';
+  return profileInterests.filter((interest) => !data.some(({ product }) => product.split(',').includes(interest)));
+}
 
+// Build a placeholder for the card
 const renderCardPlaceholders = (contentDiv, renderCardsFlag = true) => {
   const cardDiv = document.createElement('div');
   cardDiv.classList.add('card-wrapper');
@@ -80,28 +179,30 @@ export default async function decorate(block) {
   // Extracting elements from the block
   const htmlElementData = [...block.children].map((row) => row.firstElementChild);
   const [headingElement, descriptionElement, filterSectionElement, ...remainingElements] = htmlElementData;
-
+  const recommendedContentShimmer = `
+  <div class="recommended-content-header">${generateLoadingShimmer([[50, 14]])}</div>
+  <div class="recommended-content-description">${generateLoadingShimmer([[50, 10]])}</div>
+`;
   // Clearing the block's content and adding CSS class
   block.innerHTML = '';
-  headingElement.classList.add('recommended-content-header');
-  descriptionElement.classList.add('recommended-content-description');
+
   filterSectionElement.classList.add('recommended-content-filter-heading');
   const blockHeader = createTag('div', { class: 'recommended-content-block-header' });
-  block.appendChild(headingElement);
-  block.appendChild(descriptionElement);
+  blockHeader.innerHTML = generateLoadingShimmer([[80, 30]]);
+  block.insertAdjacentHTML('afterbegin', recommendedContentShimmer);
   block.appendChild(filterSectionElement);
   block.appendChild(blockHeader);
 
+  const headerContainer = block.querySelector('.recommended-content-header');
+  const descriptionContainer = block.querySelector('.recommended-content-description');
   const reversedDomElements = remainingElements.reverse();
-  const [firstEl, secondEl, targetCriteria, thirdEl, fourthEl, fifthEl, ...otherEl] = reversedDomElements;
-  const targetCriteriaId = targetCriteria.textContent.trim();
+  const [linkEl, resultTextEl, sortEl, roleEl, solutionEl, filterProductByOptionEl, ...contentTypesEl] =
+    reversedDomElements;
+  const targetCriteriaId = block.dataset.targetScope;
   const profileDataPromise = defaultProfileClient.getMergedProfile();
 
   const tempWrapper = htmlToElement(`
       <div class="recommended-content-temp-wrapper">
-        <div class="recommended-tab-headers">
-          <p class="loading-shimmer" style="--placeholder-width: 100%; height: 48px"></p>
-        </div>
         <div class="browse-cards-block-content recommended-content-block-section recommended-content-shimmer-wrapper"></div>
       </div>
     `);
@@ -114,7 +215,141 @@ export default async function decorate(block) {
 
   block.appendChild(tempWrapper);
 
-  checkTargetSupport().then(async (targetSupport) => {
+  const defaultOptionsKey = [];
+  let contentTypesFetchMap = {};
+  const cardIdsToExclude = [];
+  const allMyProductsCardModels = [];
+  const dataConfiguration = {};
+
+  const getCardsData = (payload) =>
+    new Promise((resolve) => {
+      BrowseCardsDelegate.fetchCardData(payload)
+        .then((data) => {
+          const [ct] = payload.contentType || [''];
+          resolve({
+            contentType: ct,
+            data,
+          });
+        })
+        .catch(() => {
+          resolve({});
+        });
+    });
+
+  const renderCardsBlock = (cardModels, payloadConfig, contentDiv) => {
+    const { renderCards = true, lowercaseOptionType } = payloadConfig;
+    const promises = cardModels.map(
+      (cardData, i) =>
+        new Promise((resolve) => {
+          const cardDiv = payloadConfig.wrappers[i];
+          const alreadyRenderedCardIds = dataConfiguration[lowercaseOptionType]?.renderedCardIds || [];
+          if (cardData?.cardPromise) {
+            cardData.cardPromise.then((cardDataResponse) => {
+              const { cardsToRenderCount } = cardData;
+              const { data: delayedCardData = [] } = cardDataResponse;
+              const cardModelsList = [];
+              if (delayedCardData.length === 0) {
+                if (renderCards) {
+                  cardData.shimmers?.forEach((shimmerEl, index) => {
+                    shimmerEl.remove();
+                    cardData.wrappers[index].style.display = 'none';
+                  });
+                }
+              } else {
+                countNumberAsArray(cardsToRenderCount).forEach((_, index) => {
+                  const shimmer = cardData.shimmers[index];
+                  const wrapperDiv = cardData.wrappers[index];
+                  if (renderCards) {
+                    if (shimmer) {
+                      shimmer.remove();
+                    }
+                    wrapperDiv.innerHTML = '';
+                  }
+                  const [defaultCardModel] = delayedCardData;
+                  const targetIndex = delayedCardData.findIndex((delayData) =>
+                    delayData.id ? !alreadyRenderedCardIds.includes(delayData.id) : false,
+                  );
+                  let cardModel;
+                  if (targetIndex !== -1) {
+                    cardModel = delayedCardData[targetIndex];
+                    delayedCardData.splice(targetIndex, 1);
+                  } else {
+                    cardModel = defaultCardModel;
+                    delayedCardData.splice(0, 1);
+                  }
+                  if (renderCards) {
+                    if (cardModel.id) {
+                      dataConfiguration[lowercaseOptionType].renderedCardIds.push(cardModel.id);
+                    }
+                    buildCard(contentDiv, wrapperDiv, cardModel);
+                  }
+                  cardModelsList.push(cardModel);
+                });
+              }
+              resolve(cardModelsList);
+            });
+          } else {
+            if (renderCards) {
+              cardDiv.innerHTML = '';
+              if (cardData.id) {
+                dataConfiguration[lowercaseOptionType].renderedCardIds.push(cardData.id);
+              }
+              buildCard(contentDiv, cardDiv, cardData);
+            }
+            resolve([cardData]);
+          }
+        }),
+    );
+    return promises;
+  };
+
+  const recommendedContentNoResults = () => {
+    const recommendedContentNoResultsElement = block.querySelector('.browse-card-no-results');
+    const noResultsText =
+      placeholders?.recommendedContentNoResultsText ||
+      `We couldn’t find specific matches, but here are the latest tutorials/articles that others are loving right now!`;
+    recommendedContentNoResultsElement.innerHTML = noResultsText;
+  };
+
+  const renderCardBlock = (parentDiv) => {
+    if (block.contains(tempWrapper)) {
+      block.removeChild(tempWrapper);
+    }
+    const contentDiv = document.createElement('div');
+    contentDiv.classList.add('browse-cards-block-content', 'recommended-content-block-section');
+    parentDiv.appendChild(contentDiv);
+    resultTextEl.classList.add('recommended-content-discover-resource');
+    linkEl.classList.add('recommended-content-result-link');
+    if (linkEl.innerHTML || resultTextEl.innerHTML) {
+      const seeMoreEl = document.createElement('div');
+      seeMoreEl.classList.add('recommended-content-result-text');
+      seeMoreEl.appendChild(resultTextEl);
+      seeMoreEl.appendChild(linkEl);
+      parentDiv.appendChild(seeMoreEl);
+    }
+  };
+
+  const getListOfFilterOptions = async (targetSupport, profileInterests, targetCriteriaScopeId) => {
+    const sortedProfileInterests = profileInterests.sort();
+    let filterOptions = [...new Set(sortedProfileInterests)];
+    filterOptions.unshift(...defaultOptionsKey);
+    if (targetSupport) {
+      const emptyFilters = await findEmptyFilters(targetCriteriaScopeId, profileInterests);
+      filterOptions = filterOptions.filter((ele) => !emptyFilters.includes(ele));
+    }
+    return filterOptions;
+  };
+
+  const resetContentDiv = (contentDiv) => {
+    contentDiv.innerHTML = '';
+    contentDiv.style.display = '';
+    const noResultsContent = block.querySelector('.browse-card-no-results');
+    if (noResultsContent) {
+      noResultsContent.remove();
+    }
+  };
+
+  async function renderBlock({ targetSupport, targetCriteriaScopeId }) {
     Promise.all([profileDataPromise, interestDataPromise]).then(async (promiseResponses) => {
       const [profileData, interestsDataArray] = promiseResponses;
       const {
@@ -123,29 +358,30 @@ export default async function decorate(block) {
         solutionLevels: profileSolutionLevels = [],
       } = profileData || {};
 
-      const defaultOptionsKey = [];
-
       if (profileInterests.length === 0) {
-        filterSectionElement.style.display = 'none';
-        blockHeader.style.display = 'none';
+        if (!UEAuthorMode) filterSectionElement.style.display = 'none';
+        if (!UEAuthorMode) blockHeader.style.display = 'none';
         defaultOptionsKey.push(ALL_ADOBE_OPTIONS_KEY);
       } else if (profileInterests.length === 1) {
-        filterSectionElement.style.display = 'none';
+        if (!UEAuthorMode) filterSectionElement.style.display = 'none';
         defaultOptionsKey.push(ALL_ADOBE_OPTIONS_KEY);
       } else {
         defaultOptionsKey.push(ALL_ADOBE_OPTIONS_KEY);
       }
 
-      if (!(targetSupport && targetCriteriaId)) {
+      if (!(targetSupport && targetCriteriaScopeId)) {
+        headerContainer.innerHTML = headingElement.innerText;
+        descriptionContainer.innerHTML = descriptionElement.innerText;
+        setCoveoCountAsBlockAttribute();
         block.style.display = 'block';
       }
 
-      const sortByContent = thirdEl?.innerText?.trim();
-      const contentTypes = otherEl?.map((contentTypeEL) => contentTypeEL?.innerText?.trim()).reverse() || [];
+      const sortByContent = sortEl?.innerText?.trim();
+      const contentTypes = contentTypesEl?.map((contentTypeEL) => contentTypeEL?.innerText?.trim()).reverse() || [];
       const contentTypeIsEmpty = contentTypes?.length === 0;
       const numberOfResults = contentTypeIsEmpty ? DEFAULT_NUM_CARDS : 1;
 
-      const contentTypesFetchMap = contentTypeIsEmpty
+      contentTypesFetchMap = contentTypeIsEmpty
         ? { '': DEFAULT_NUM_CARDS }
         : contentTypes.reduce((acc, curr) => {
             if (!acc[curr]) {
@@ -156,12 +392,9 @@ export default async function decorate(block) {
             return acc;
           }, {});
 
-      const encodedSolutionsText = fifthEl.innerText?.trim() ?? '';
-
+      const encodedSolutionsText = solutionEl.innerText?.trim() ?? '';
       const { products, versions, features } = extractCapability(encodedSolutionsText);
-
       const sortedProfileInterests = profileInterests.sort();
-      let filterOptions = [...new Set(sortedProfileInterests)];
       const experienceLevels = sortedProfileInterests.map((interestName) => {
         const interest = (interestsDataArray || []).find((int) => int.Name === interestName);
         let expLevel = 'Beginner';
@@ -174,35 +407,20 @@ export default async function decorate(block) {
         }
         return expLevel;
       });
-
       const sortCriteria = COVEO_SORT_OPTIONS[sortByContent?.toUpperCase() ?? 'MOST_POPULAR'];
-      const role = fourthEl?.innerText?.trim()?.includes('profile_context')
+      const filterProductByOption = filterProductByOptionEl?.innerText?.trim() ?? '';
+      const role = roleEl?.innerText?.trim()?.includes('profile_context')
         ? profileRoles
-        : fourthEl?.innerText?.trim().split(',').filter(Boolean);
+        : roleEl?.innerText?.trim().split(',').filter(Boolean);
 
-      filterOptions.unshift(...defaultOptionsKey);
+      const filterOptions = await getListOfFilterOptions(targetSupport, profileInterests, targetCriteriaScopeId);
+      if (filterOptions.length <= 1 && !UEAuthorMode) {
+        filterSectionElement.style.display = 'none';
+      }
       const [defaultFilterOption = ''] = filterOptions;
       const containsAllAdobeProductsTab = filterOptions.includes(ALL_ADOBE_OPTIONS_KEY);
-      const cardIdsToExclude = [];
-      const allMyProductsCardModels = [];
-      const dataConfiguration = {};
 
-      const getCardsData = (payload) =>
-        new Promise((resolve) => {
-          BrowseCardsDelegate.fetchCardData(payload)
-            .then((data) => {
-              const [ct] = payload.contentType || [''];
-              resolve({
-                contentType: ct,
-                data,
-              });
-            })
-            .catch(() => {
-              resolve({});
-            });
-        });
-
-      const parseCardResponseData = (cardResponse, apiConfigObject) => {
+      async function parseCardResponseData(cardResponse, apiConfigObject) {
         let data = [];
         if (targetSupport) {
           data = cardResponse?.data ?? [];
@@ -232,13 +450,7 @@ export default async function decorate(block) {
               data = cardResponse.allAdobeProducts;
             }
           }
-          const cardData = [];
-          let i = 0;
-          while (cardData.length < 4 && i < data.length) {
-            cardData.push(targetDataAdapter(data[i], placeholders));
-            i += 1;
-          }
-          data = cardData;
+          data = await BrowseCardsTargetDataAdapter.mapResultsToCardsData(data.slice(0, 4));
         } else {
           const { data: cards = [], contentType: ctType } = cardResponse || {};
           const { shimmers: cardShimmers, payload: apiPayload, wrappers: cardWrappers } = apiConfigObject;
@@ -271,83 +483,7 @@ export default async function decorate(block) {
           }
         }
         return data;
-      };
-
-      const renderCardsBlock = (cardModels, payloadConfig, contentDiv) => {
-        const { renderCards = true, lowercaseOptionType } = payloadConfig;
-        const promises = cardModels.map(
-          (cardData, i) =>
-            new Promise((resolve) => {
-              const cardDiv = payloadConfig.wrappers[i];
-              const alreadyRenderedCardIds = dataConfiguration[lowercaseOptionType]?.renderedCardIds || [];
-              if (cardData?.cardPromise) {
-                cardData.cardPromise.then((cardDataResponse) => {
-                  const { cardsToRenderCount } = cardData;
-                  const { data: delayedCardData = [] } = cardDataResponse;
-                  const cardModelsList = [];
-                  if (delayedCardData.length === 0) {
-                    if (renderCards) {
-                      cardData.shimmers?.forEach((shimmerEl, index) => {
-                        shimmerEl.remove();
-                        cardData.wrappers[index].style.display = 'none';
-                      });
-                    }
-                  } else {
-                    countNumberAsArray(cardsToRenderCount).forEach((_, index) => {
-                      const shimmer = cardData.shimmers[index];
-                      const wrapperDiv = cardData.wrappers[index];
-                      if (renderCards) {
-                        if (shimmer) {
-                          shimmer.remove();
-                        }
-                        wrapperDiv.innerHTML = '';
-                      }
-                      const [defaultCardModel] = delayedCardData;
-                      const targetIndex = delayedCardData.findIndex((delayData) =>
-                        delayData.id ? !alreadyRenderedCardIds.includes(delayData.id) : false,
-                      );
-                      let cardModel;
-                      if (targetIndex !== -1) {
-                        cardModel = delayedCardData[targetIndex];
-                        delayedCardData.splice(targetIndex, 1);
-                      } else {
-                        cardModel = defaultCardModel;
-                        delayedCardData.splice(0, 1);
-                      }
-                      if (renderCards) {
-                        if (cardModel.id) {
-                          dataConfiguration[lowercaseOptionType].renderedCardIds.push(cardModel.id);
-                        }
-                        buildCard(contentDiv, wrapperDiv, cardModel);
-                      }
-                      cardModelsList.push(cardModel);
-                    });
-                  }
-                  resolve(cardModelsList);
-                });
-              } else {
-                if (renderCards) {
-                  cardDiv.innerHTML = '';
-                  if (cardData.id) {
-                    dataConfiguration[lowercaseOptionType].renderedCardIds.push(cardData.id);
-                  }
-                  buildCard(contentDiv, cardDiv, cardData);
-                }
-                resolve([cardData]);
-              }
-            }),
-        );
-        contentDiv.style.display = 'flex';
-        return promises;
-      };
-
-      const recommendedContentNoResults = () => {
-        const recommendedContentNoResultsElement = block.querySelector('.browse-card-no-results');
-        const noResultsText =
-          placeholders?.recommendedContentNoResultsText ||
-          `We couldn’t find specific matches, but here are the latest tutorials/articles that others are loving right now!`;
-        recommendedContentNoResultsElement.innerHTML = noResultsText;
-      };
+      }
 
       const fetchDataAndRenderBlock = async (optionType, renderCards = true) => {
         const contentDiv = block.querySelector('.recommended-content-block-section');
@@ -360,19 +496,25 @@ export default async function decorate(block) {
         dataConfiguration[lowercaseOptionType].renderedCardIds = [];
         contentDiv.dataset.selected = lowercaseOptionType;
         contentDiv.setAttribute('data-analytics-filter-id', lowercaseOptionType);
-        const showProfileOptions = defaultOptionsKey.some((key) => lowercaseOptionType === key.toLowerCase());
+        const showDefaultOptions = defaultOptionsKey.some((key) => lowercaseOptionType === key.toLowerCase());
         const interest = filterOptions.find((opt) => opt.toLowerCase() === lowercaseOptionType);
         const expLevelIndex = sortedProfileInterests.findIndex((s) => s === interest);
         const expLevel = experienceLevels[expLevelIndex] ?? 'Beginner';
-        let clonedProducts = structuredClone(removeProductDuplicates(products));
-        if (!showProfileOptions && !clonedProducts.find((c) => c.toLowerCase() === lowercaseOptionType)) {
-          clonedProducts.push(interest);
+        let clonedProducts = showDefaultOptions ? structuredClone(removeProductDuplicates(products)) : [interest];
+        if (showDefaultOptions) {
+          switch (filterProductByOption) {
+            case 'profile_context':
+              clonedProducts = [...new Set(sortedProfileInterests)];
+              break;
+            case 'specific_products':
+              clonedProducts = products?.length ? [...products] : [];
+              break;
+            default:
+              clonedProducts = [];
+              break;
+          }
         }
 
-        if (showProfileOptions) {
-          // show everything for default tab
-          clonedProducts = [...new Set([...products, ...sortedProfileInterests])];
-        }
         const params = {
           contentType: null,
           product: clonedProducts,
@@ -381,26 +523,16 @@ export default async function decorate(block) {
           role: role?.length ? role : profileRoles,
           sortCriteria,
           noOfResults: numberOfResults,
-          context: showProfileOptions
-            ? { role: profileRoles, interests: sortedProfileInterests, experience: experienceLevels }
-            : { interests: [interest], experience: [expLevel], role: profileRoles },
+          aq: !showDefaultOptions && cardIdsToExclude.length ? prepareExclusionQuery(cardIdsToExclude) : undefined,
+          context: showDefaultOptions ? {} : { interests: [interest], experience: [expLevel], role: profileRoles },
         };
 
-        if (!showProfileOptions && cardIdsToExclude.length) {
-          const aq = prepareExclusionQuery(cardIdsToExclude);
-          params.aq = aq;
+        if (renderCards) {
+          resetContentDiv(contentDiv);
         }
 
-        if (renderCards) {
-          contentDiv.innerHTML = '';
-          contentDiv.style.display = '';
-          const noResultsContent = block.querySelector('.browse-card-no-results');
-          if (noResultsContent) {
-            noResultsContent.remove();
-          }
-        }
-        let cardPromises = [];
-        if (targetSupport) {
+        const prepareTargetBlockCardPromise = () => {
+          const targetPromises = [];
           const cardShimmers = [];
           const wrappers = [];
           countNumberAsArray(DEFAULT_NUM_CARDS).forEach(() => {
@@ -409,7 +541,7 @@ export default async function decorate(block) {
             wrappers.push(wrapper);
           });
           const payloadConfig = {
-            targetSupport,
+            targetSupport: true,
             shimmers: cardShimmers,
             wrappers,
             params,
@@ -417,29 +549,24 @@ export default async function decorate(block) {
             renderCards,
             lowercaseOptionType,
           };
-          cardPromises.push(
+          targetPromises.push(
             new Promise((resolve) => {
-              handleTargetEvent(targetCriteriaId)
+              defaultAdobeTargetClient
+                .getTargetData(targetCriteriaScopeId)
                 .then(async (resp) => {
                   if (!resp) {
                     if (!UEAuthorMode) {
+                      const section = block.closest('.section');
                       block.parentElement.remove();
-                      document.querySelectorAll('.section:not(.profile-rail-section)').forEach((element) => {
-                        if (element.textContent.trim() === '') {
-                          element.remove();
-                        }
-                      });
+                      if (section?.children?.length === 0) section.remove();
                     }
                   }
                   if (resp?.data) {
-                    updateCopyFromTarget(resp, headingElement, descriptionElement, firstEl, secondEl);
+                    updateCopyFromTarget(resp, headerContainer, descriptionContainer, linkEl, resultTextEl);
                     block.style.display = 'block';
                     setTargetDataAsBlockAttribute(resp, block);
-                    block
-                      .querySelector('.recommended-content-block-section')
-                      ?.setAttribute('data-analytics-rec-source', 'target');
                   }
-                  const cardModels = parseCardResponseData(resp, payloadConfig);
+                  const cardModels = await parseCardResponseData(resp, payloadConfig);
                   let renderedCardModels = [];
                   if (cardModels?.length) {
                     const targetCardRenderPromises = renderCardsBlock(cardModels, payloadConfig, contentDiv);
@@ -456,9 +583,10 @@ export default async function decorate(block) {
                 });
             }),
           );
-        } else {
-          block.querySelector('.recommended-content-block-section')?.setAttribute('data-analytics-rec-source', 'coveo');
-          cardPromises = Object.keys(contentTypesFetchMap).map((contentType) => {
+          return targetPromises;
+        };
+        const prepareV2CardPromise = () =>
+          Object.keys(contentTypesFetchMap).map((contentType) => {
             const payload = {
               ...params,
             };
@@ -487,7 +615,7 @@ export default async function decorate(block) {
             };
             return new Promise((resolve) => {
               getCardsData(payload).then(async (resp) => {
-                const cardModels = parseCardResponseData(resp, payloadConfig);
+                const cardModels = await parseCardResponseData(resp, payloadConfig);
                 let renderedCardModels = [];
                 if (cardModels?.length) {
                   const renderPromises = renderCardsBlock(cardModels, payloadConfig, contentDiv);
@@ -501,7 +629,13 @@ export default async function decorate(block) {
               });
             });
           });
-        }
+
+        const cardPromises = targetSupport ? prepareTargetBlockCardPromise() : prepareV2CardPromise();
+
+        block
+          .querySelector('.recommended-content-block-section')
+          ?.setAttribute('data-analytics-rec-source', targetSupport ? 'target' : 'coveo');
+
         Promise.all(cardPromises)
           .then((finalPromiseResponse) => {
             const dontRenderCards = finalPromiseResponse.some((data) => data?.payloadConfig?.renderCards === false);
@@ -528,7 +662,6 @@ export default async function decorate(block) {
               buildNoResultsContent(contentDiv, false);
               buildNoResultsContent(contentDiv, true);
               recommendedContentNoResults(contentDiv);
-              contentDiv.style.display = 'block';
               return;
             }
 
@@ -544,7 +677,6 @@ export default async function decorate(block) {
             if (cardsBlockCount === 0) {
               buildNoResultsContent(contentDiv, true);
               recommendedContentNoResults(contentDiv);
-              contentDiv.style.display = 'block';
             } else {
               // In the unlikely scenario that some card promises were successfully resolved, while some others failed. Try to show the rendered cards.
               Array.from(contentDiv.querySelectorAll('.shimmer-placeholder')).forEach((element) => {
@@ -556,110 +688,6 @@ export default async function decorate(block) {
           });
       };
 
-      const renderCardBlock = (parentDiv) => {
-        block.removeChild(tempWrapper);
-        const contentDiv = document.createElement('div');
-        contentDiv.classList.add('browse-cards-block-content', 'recommended-content-block-section');
-        parentDiv.appendChild(contentDiv);
-        secondEl.classList.add('recommended-content-discover-resource');
-        firstEl.classList.add('recommended-content-result-link');
-        if (firstEl.innerHTML || secondEl.innerHTML) {
-          const seeMoreEl = document.createElement('div');
-          seeMoreEl.classList.add('recommended-content-result-text');
-          seeMoreEl.appendChild(secondEl);
-          seeMoreEl.appendChild(firstEl);
-          parentDiv.appendChild(seeMoreEl);
-        }
-      };
-
-      /* TODO: Commenting it for further references, will up updating for the below code for navigation arrow changes */
-      /*
-    const setNavigationElementStatus = () => {
-      const prevNav = block.querySelector('.prev-nav');
-      const nextNav = block.querySelector('.next-nav');
-      const scrollBarSection = block.querySelector('.recommended-content-block-section');
-      const { scrollLeft } = scrollBarSection;
-      const delta = 10;
-      const scrollRightMax = scrollBarSection.scrollWidth - delta;
-      if (scrollLeft === 0) {
-        prevNav.classList.add('disabled');
-      } else {
-        prevNav.classList.remove('disabled');
-      }
-      if (scrollBarSection.offsetWidth && scrollLeft + scrollBarSection.offsetWidth >= scrollRightMax) {
-        nextNav.classList.add('disabled');
-      } else {
-        nextNav.classList.remove('disabled');
-      }
-    };
-    
-    const handleScroll = (next) => {
-      const loadNext = next === true;
-      const blockContent = block.querySelector('.recommended-content-block-section');
-      const elementWidth = blockContent?.firstElementChild?.offsetWidth || 0;
-      if (!elementWidth) {
-        return;
-      }
-      const currentScrollLeft = Math.ceil(blockContent.scrollLeft);
-      const gapValue = parseInt(getComputedStyle(blockContent).gap, 10);
-      const scrollOffsetValue = gapValue + elementWidth;
-  
-      const offsetDelta =
-        currentScrollLeft % scrollOffsetValue > 0.6 * scrollOffsetValue ? 0 : currentScrollLeft % scrollOffsetValue;
-  
-      const targetScrollLeft = currentScrollLeft - offsetDelta + (loadNext ? scrollOffsetValue : -scrollOffsetValue);
-      blockContent.scrollLeft = targetScrollLeft;
-      setNavigationElementStatus();
-    };
-    
-    const renderNavigationArrows = () => {
-      const navigationElements = htmlToElement(`
-                  <div class="recommended-content-nav-section">
-                      <button class="prev-nav">
-                          <span class="icon icon-chevron"></span>
-                      </button>
-                      <button class="next-nav">
-                          <span class="icon icon-chevron"></span>
-                      </button
-                  </div>
-              `);
-      const prevButton = navigationElements.querySelector('.prev-nav');
-      const nextButton = navigationElements.querySelector('.next-nav');
-      prevButton.addEventListener('click', () => {
-        handleScroll(false);
-      });
-      nextButton.addEventListener('click', () => {
-        handleScroll(true);
-      });
-      const scrollBarSection = block.querySelector('.recommended-content-block-section');
-      scrollBarSection.addEventListener('scrollend', setNavigationElementStatus);
-      blockHeader.appendChild(navigationElements);
-      setNavigationElementStatus();
-    };
-    */
-      async function findEmptyFilters() {
-        const removeFilters = [];
-        const resp = await handleTargetEvent(targetCriteriaId);
-        if (resp?.data) {
-          const { data } = resp;
-          profileInterests.forEach((interest) => {
-            let found = false;
-            for (let i = 0; i < data?.length ? data.length : 0; i += 1) {
-              if (data[i].product.split(',').includes(interest)) {
-                found = true;
-                break;
-              }
-            }
-            if (!found) removeFilters.push(interest);
-          });
-        }
-        return removeFilters;
-      }
-
-      if (targetSupport) {
-        const emptyFilters = await findEmptyFilters();
-        filterOptions = filterOptions.filter((ele) => !emptyFilters.includes(ele));
-      }
       /* Responsive List View */
       const listItems = filterOptions.map((item) => {
         const value = item ? convertToTitleCase(item) : '';
@@ -694,5 +722,19 @@ export default async function decorate(block) {
         },
       });
     });
+  }
+
+  targetEventEmitter.on('dataChange', async (data) => {
+    const blockId = block.id;
+    const { blockId: targetBlockId, scope } = data.value;
+    if (targetBlockId === blockId) {
+      renderBlock({ targetSupport: true, targetCriteriaScopeId: scope });
+    }
+  });
+
+  defaultAdobeTargetClient.checkTargetSupport().then(async (targetSupport) => {
+    if (targetCriteriaId || !targetSupport) {
+      renderBlock({ targetSupport, targetCriteriaScopeId: targetCriteriaId });
+    }
   });
 }

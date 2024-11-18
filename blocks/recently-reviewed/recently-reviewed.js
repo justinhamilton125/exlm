@@ -1,87 +1,137 @@
-import { getConfig, fetchLanguagePlaceholders, htmlToElement } from '../../scripts/scripts.js';
-import {
-  handleTargetEvent,
-  checkTargetSupport,
-  targetDataAdapter,
-  updateCopyFromTarget,
-  setTargetDataAsBlockAttribute,
-} from '../../scripts/target/target.js';
+import { htmlToElement } from '../../scripts/scripts.js';
 import BuildPlaceholder from '../../scripts/browse-card/browse-card-placeholder.js';
 import { buildCard, buildNoResultsContent } from '../../scripts/browse-card/browse-card.js';
 import Swiper from '../../scripts/swiper/swiper.js';
 import { decorateIcons } from '../../scripts/lib-franklin.js';
+import BrowseCardsTargetDataAdapter from '../../scripts/browse-card/browse-card-target-data-adapter.js';
+import defaultAdobeTargetClient from '../../scripts/adobe-target/adobe-target.js';
+import getEmitter from '../../scripts/events.js';
+
+const targetEventEmitter = getEmitter('loadTargetBlocks');
 
 const UEAuthorMode = window.hlx.aemRoot || window.location.href.includes('.html');
-const { targetCriteriaIds } = getConfig();
-let placeholders = {};
 let displayBlock = false;
+
+/**
+ * Update the copy from the target
+ * @param {Object} data
+ * @param {HTMLElement} heading
+ * @param {HTMLElement} subheading
+ * @returns {void}
+ */
+export function updateCopyFromTarget(data, heading, subheading, taglineCta, taglineText) {
+  if (data?.meta?.heading && heading) heading.innerHTML = data.meta.heading;
+  else heading?.remove();
+  if (data?.meta?.subheading && subheading) subheading.innerHTML = data.meta.subheading;
+  else subheading?.remove();
+  if (
+    taglineCta &&
+    data?.meta['tagline-cta-text'] &&
+    data?.meta['tagline-cta-url'] &&
+    data.meta['tagline-cta-text'].trim() !== '' &&
+    data.meta['tagline-cta-url'].trim() !== ''
+  ) {
+    taglineCta.innerHTML = `
+<a href="${data.meta['tagline-cta-url']}" title="${data.meta['tagline-cta-text']}">
+          ${data.meta['tagline-cta-text']}
+</a>
+      `;
+  } else {
+    taglineCta?.remove();
+  }
+  if (taglineText && data?.meta['tagline-text'] && data?.meta['tagline-text'].trim() !== '') {
+    taglineText.innerHTML = data.meta['tagline-text'];
+  } else {
+    taglineText?.remove();
+  }
+  if (!document.contains(taglineCta) && !document.contains(taglineText)) {
+    const taglineParentBlock = document.querySelector('.recommended-content-result-text');
+    if (taglineParentBlock) {
+      taglineParentBlock?.remove();
+    }
+  }
+}
+
+/**
+ * Sets target data as a data attribute on the given block element.
+ *
+ * This function checks if the provided `data` object contains a `meta` property.
+ * If the `meta` property exists, it serializes the metadata as a JSON string and
+ * adds it to the specified block element as a custom data attribute `data-analytics-target-meta`.
+ *
+ * @param {Object} data - The data returned from target.
+ * @param {HTMLElement} block - The DOM element to which the meta data will be added as an attribute.
+ *
+ */
+export function setTargetDataAsBlockAttribute(data, block) {
+  if (data?.meta) {
+    block.setAttribute('data-analytics-target-meta', JSON.stringify(data?.meta));
+  }
+}
 
 function renderNavigationArrows(titleContainer) {
   const navigationElements = htmlToElement(`
-        <div class="recently-viewed-nav-section">
-            <button class="prev-nav" disabled>
-                <span class="icon icon-chevron-gray"></span>
-            </button>
-            <button class="next-nav" disabled>
-                <span class="icon icon-chevron-gray"></span>
-            </button
-        </div>
+<div class="recently-viewed-nav-section">
+<button class="prev-nav" disabled>
+<span class="icon icon-chevron-gray"></span>
+</button>
+<button class="next-nav" disabled>
+<span class="icon icon-chevron-gray"></span>
+</button
+</div>
     `);
   decorateIcons(navigationElements);
   titleContainer.appendChild(navigationElements);
 }
 
+function removeEmptySection(block) {
+  const section = block.closest('.section');
+  block.parentElement.remove();
+  if (section?.children?.length === 0) section.remove();
+}
+
 export default async function decorate(block) {
-  try {
-    placeholders = await fetchLanguagePlaceholders();
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error('Error fetching placeholders:', err);
-  }
+  defaultAdobeTargetClient.checkTargetSupport().then((targetSupport) => {
+    let headingElement;
+    let descriptionElement;
+    if (!block.dataset.targetScope) {
+      [headingElement, descriptionElement] = [...block.children].map((row) => row.firstElementChild);
+    } else {
+      headingElement = htmlToElement('<h2></h2>');
+      descriptionElement = htmlToElement('<p></p>');
+      block.prepend(headingElement);
+      block.prepend(descriptionElement);
+    }
+    headingElement.classList.add('recently-reviewed-header');
+    descriptionElement.classList.add('recently-reviewed-description');
+    const titleContainer = document.createElement('div');
+    const navContainer = document.createElement('div');
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'browse-cards-block-content';
+    const buildCardsShimmer = new BuildPlaceholder();
 
-  checkTargetSupport()
-    .then(async (targetSupport) => {
-      const [headingElement, descriptionElement] = [...block.children].map((row) => row.firstElementChild);
-      headingElement.classList.add('recently-reviewed-header');
-      descriptionElement.classList.add('recently-reviewed-description');
+    function appendNavAndContent() {
+      navContainer.classList.add('recently-viewed-nav-container');
+      navContainer.appendChild(titleContainer);
+      titleContainer.appendChild(headingElement);
+      titleContainer.appendChild(descriptionElement);
+      renderNavigationArrows(navContainer);
+      block.appendChild(navContainer);
+      block.appendChild(contentDiv);
+    }
 
-      const titleContainer = document.createElement('div');
-      const navContainer = document.createElement('div');
-      const contentDiv = document.createElement('div');
-      contentDiv.className = 'browse-cards-block-content';
-      const buildCardsShimmer = new BuildPlaceholder();
-
-      function appendNavAndContent() {
-        navContainer.classList.add('recently-viewed-nav-container');
-        navContainer.appendChild(titleContainer);
-        titleContainer.appendChild(headingElement);
-        titleContainer.appendChild(descriptionElement);
-        renderNavigationArrows(navContainer);
-        block.appendChild(navContainer);
-        block.appendChild(contentDiv);
-      }
-
-      if (UEAuthorMode) {
-        displayBlock = true;
-        appendNavAndContent();
-        buildCardsShimmer.add(block);
-        const authorInfo = 'Based on profile context, if the customer has enabled the necessary cookies';
-        buildNoResultsContent(contentDiv, true, authorInfo);
-        buildCardsShimmer.remove();
-      }
-
-      if (targetSupport) {
-        const resp = await handleTargetEvent(targetCriteriaIds.recentlyViewed);
+    function renderCards() {
+      defaultAdobeTargetClient.getTargetData(block.dataset.targetScope).then(async (resp) => {
         updateCopyFromTarget(resp, headingElement, descriptionElement);
-        if (resp?.data.length) {
+        if (resp?.data?.length) {
           displayBlock = true;
           appendNavAndContent();
           buildCardsShimmer.add(block);
 
-          resp.data.forEach((item) => {
-            const cardData = targetDataAdapter(item, placeholders);
+          const cardData = await BrowseCardsTargetDataAdapter.mapResultsToCardsData(resp.data);
+          cardData.forEach((item) => {
             const cardDiv = document.createElement('div');
-            buildCard(contentDiv, cardDiv, cardData);
+            buildCard(contentDiv, cardDiv, item);
             contentDiv.appendChild(cardDiv);
           });
 
@@ -93,18 +143,35 @@ export default async function decorate(block) {
           setTargetDataAsBlockAttribute(resp, block);
         } else {
           buildNoResultsContent(contentDiv, true);
+          if (!UEAuthorMode && !displayBlock) {
+            removeEmptySection(block);
+          }
         }
         buildCardsShimmer.remove();
-      }
-    })
-    .finally(() => {
-      if (!UEAuthorMode && !displayBlock) {
-        block.parentElement.remove();
-        document.querySelectorAll('.section:not(.profile-rail-section)').forEach((element) => {
-          if (element.textContent.trim() === '') {
-            element.remove();
-          }
-        });
+      });
+    }
+
+    if (UEAuthorMode) {
+      displayBlock = true;
+      appendNavAndContent();
+      buildCardsShimmer.add(block);
+      const authorInfo = 'Based on profile context, if the customer has enabled the necessary cookies';
+      buildNoResultsContent(contentDiv, true, authorInfo);
+      buildCardsShimmer.remove();
+    }
+
+    if (!targetSupport && !UEAuthorMode) {
+      removeEmptySection(block);
+    }
+
+    if (targetSupport && block.dataset.targetScope) {
+      renderCards();
+    }
+
+    targetEventEmitter.on('dataChange', async (data) => {
+      if (block.id === data.value.blockId) {
+        renderCards();
       }
     });
+  });
 }
